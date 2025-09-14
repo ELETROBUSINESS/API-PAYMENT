@@ -1,15 +1,11 @@
 {
   "name": "eletro-supplier-backend",
   "version": "1.0.0",
-  "description": "Backend para o e-commerce ELETRO Supplier",
-  "main": "api/server.js",
+  "description": "Backend serverless para ELETRO Supplier (Vercel)",
+  "main": "api/create-payment.js",
   "type": "module",
   "scripts": {
-    "start": "node api/server.js"
+    "start": "node ./api/create-payment.js"
   },
-  "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2"
-  }
+  "dependencies": {}
 }
