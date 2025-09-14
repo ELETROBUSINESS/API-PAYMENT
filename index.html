@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ELETRO Supplier - E-commerce</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://sdk.mercadopago.com/js/v2"></script>
+    
+    <script>
+        document.addEventListener('alpine:init', () => {
+            let productData = JSON.parse(localStorage.getItem('eletroSupplierProducts')) || [
+                { id: 'prod1', name: 'Conjunto Kit 36 Cores Canetas Marcador Ponta Dupla Profissional', price: 39.73, image: 'https://a-static.mlcdn.com.br/1500x1500/canetinha-touch-ponta-dupla-36-cores/raydelpapelaria/2973611c461211f0ab8e42010a480899/40761f15ada21eec8f5919162894e117.jpeg' },
+                { id: 'prod2', name: 'Conjunto Kit 24 Cores Canetas Marcador', price: 3.50, image: 'https://placehold.co/300x300/E5E7EB/4B5563?text=24+Canetas' },
+                { id: 'prod3', name: 'Conjunto Kit 48 Cores Canetas Marcador', price: 47.94, image: 'https://placehold.co/300x300/E5E7EB/4B5563?text=48+Canetas' },
+            ];
+            Alpine.store('products', { items: productData });
+
+            let savedData = JSON.parse(localStorage.getItem('eletroSupplierSaved')) || [];
+            Alpine.store('savedItems', {
+                items: savedData,
+                save() { localStorage.setItem('eletroSupplierSaved', JSON.stringify(this.items)); },
+                isSaved(productId) { return this.items.some(i => i.id === productId); },
+                toggleSave(product) {
+                    this.isSaved(product.id) ? this.items = this.items.filter(i => i.id !== product.id) : this.items.push(product);
+                    this.save();
+                }
+            });
+
+            let cartData = JSON.parse(localStorage.getItem('eletroSupplierCart')) || [];
+            Alpine.store('cart', {
+                items: cartData,
+                save() { localStorage.setItem('eletroSupplierCart', JSON.stringify(this.items)); },
+                addToCart(product) { let e = this.items.find(i => i.id === product.id); e ? e.quantity++ : this.items.push({ ...product, quantity: 1 }); this.save(); },
+                removeFromCart(productId) { this.items = this.items.filter(i => i.id !== productId); this.save(); },
+                updateQuantity(productId, quantity) { let i = this.items.find(p => p.id === productId); if(i){ const nq = Number(quantity); nq > 0 ? i.quantity = nq : this.removeFromCart(productId); this.save();} },
+                clearCart() { this.items = []; this.save(); },
+                get subtotal() { return this.items.reduce((t, i) => t + (i.price * i.quantity), 0); },
+                get totalItems() { return this.items.reduce((acc, item) => acc + item.quantity, 0); },
+                get shippingCost() {
+                    if (this.subtotal >= 150) return 0;
+                    if (this.totalItems === 0) return 0;
+                    if (this.totalItems < 3) return 49.99;
+                    if (this.totalItems < 7) return 37.40;
+                    return 32.50;
+                },
+                get grandTotal() { return this.subtotal + this.shippingCost; }
+            });
+        });
+    </script>
+    
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        [x-cloak] { display: none !important; }
+        .btn-add-to-cart { position: relative; overflow: hidden; }
+        .btn-add-to-cart .btn-fill { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #2563eb; transform: translateX(-100%); z-index: 1; transition: transform 1.5s ease-out; }
+        .btn-add-to-cart.is-adding .btn-fill { transform: translateX(0); }
+        .btn-add-to-cart .btn-text { position: relative; z-index: 2; }
+        .line-clamp-2 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+        .spinner { border-top-color: transparent; }
+    </style>
+</head>
+<body class="bg-gray-100" 
+      x-data="{ 
+          view: 'home',
+          paymentBrickController: null,
+          isProcessing: false,
+          selectedPaymentMethod: null,
+          customerData: {
+              name: 'Comprador Teste', email: 'test_user_123456@testuser.com', cpf: '12345678909', 
+              cep: '01234-567', street: 'Avenida Teste', number: '123', neighborhood: 'Bairro Fictício', 
+              city: 'São Paulo', state: 'SP'
+          },
+          get totalToPay() {
+              const total = $store.cart.grandTotal;
+              return this.selectedPaymentMethod === 'pix' ? total * 0.99 : total;
+          },
+          changeView(newView) { 
+              this.view = newView; 
+              if(newView !== 'checkout' && this.paymentBrickController) {
+                  this.paymentBrickController.unmount();
+                  this.paymentBrickController = null;
+              }
+          },
+          async renderPaymentBrick(amountToCharge) {
+              if (this.paymentBrickController) {
+                  this.paymentBrickController.unmount();
+                  this.paymentBrickController = null;
+              }
+              const mp = new MercadoPago('TEST-9c77f8b8-f6e4-4ec0-8401-6117a9e62e3e', { locale: 'pt-BR' });
+              const settings = {
+                  initialization: { amount: amountToCharge, payer: { email: this.customerData.email } },
+                  customization: { visual: { style: { theme: 'default' } }, paymentMethods: { creditCard: 'all', debitCard: 'all', ticket: 'all', pix: 'all' } },
+                  callbacks: {
+                      onReady: () => console.log('Payment Brick está pronto!'),
+                      onError: (error) => console.error('Erro no Brick:', error),
+                      onPaymentMethodChanged: (data) => { this.selectedPaymentMethod = data.id; },
+                  }
+              };
+              this.paymentBrickController = await mp.bricks().create('payment', 'paymentBrick_container', settings);
+          },
+          async submitPayment() {
+              if (!this.paymentBrickController) {
+                  alert('Formulário de pagamento não está pronto.');
+                  return;
+              }
+              this.isProcessing = true;
+              try {
+                  const formData = await this.paymentBrickController.getFormData();
+                  await this._sendPaymentToBackend(formData);
+              } catch (error) {
+                  alert(error.message || 'Erro ao validar dados do pagamento.');
+              } finally {
+                  this.isProcessing = false;
+              }
+          },
+          async _sendPaymentToBackend(formData) {
+              // Quando em produção, substitua pela URL do seu backend na Vercel/Netlify.
+              const backendUrl = 'http://localhost:3001/api/create-payment'; 
+              const payload = {
+                  ...formData,
+                  idempotencyKey: crypto.randomUUID(),
+                  transaction_amount: this.totalToPay,
+                  customerData: this.customerData
+              };
+              
+              const response = await fetch(backendUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload)
+              });
+              
+              const result = await response.json();
+
+              if (!response.ok || result.status !== 'success') {
+                  throw new Error(result.data?.message || 'Pagamento recusado pelo processador.');
+              }
+
+              if (result.data?.status === 'approved') {
+                  $store.cart.clearCart();
+                  this.changeView('success');
+              } else {
+                  // Lida com PIX/Boleto, que ficam pendentes.
+                  // Aqui você poderia redirecionar para uma página de status ou mostrar as instruções de pagamento.
+                  console.log('Pagamento pendente:', result.data);
+                  $store.cart.clearCart();
+                  this.changeView('success'); // Simplificado para ir para a tela de sucesso
+              }
+          }
+      }"
+      x-init="$watch('view', (value) => { if (value === 'checkout') { initCheckout(); } })">
+
+    <header class="bg-yellow-400 p-4 shadow-md sticky top-0 z-40">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-gray-800">ELETRO Supplier</h1>
+            <a href="#" class="text-gray-700 hover:text-blue-600">Minha Conta</a>
+        </div>
+    </header>
+    <main class="container mx-auto p-4 pb-24">
+        <div x-show="view === 'home'"><h2 class="text-2xl font-bold text-gray-800 mb-6">Produtos em Destaque</h2><div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6"><template x-for="product in $store.products.items" :key="product.id"><div class="bg-white rounded-lg shadow-md overflow-hidden transition-shadow duration-300 hover:shadow-xl flex flex-col"><div class="relative"><img :src="product.image" :alt="product.name" class="w-full h-40 object-cover"><button @click="$store.savedItems.toggleSave(product)" class="absolute top-2 right-2 bg-white/70 backdrop-blur-sm rounded-full p-2 text-gray-700 hover:text-red-500 transition-colors"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :class="{'fill-red-500 text-red-500': $store.savedItems.isSaved(product.id) }"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg></button></div><div class="p-4 flex flex-col flex-grow"><h3 class="text-md font-semibold text-gray-800 h-12 line-clamp-2" x-text="product.name"></h3><p class="text-xl font-bold text-gray-900 mt-2" x-text="`R$ ${Number(product.price).toFixed(2).replace('.', ',')}`"></p><div x-data="{ isAdding: false }" class="mt-auto pt-4"><button @click="isAdding = true; $store.cart.addToCart(product); setTimeout(() => { isAdding = false }, 1500)" :disabled="isAdding" class="w-full text-white py-2 rounded-lg transition-colors btn-add-to-cart" :class="{ 'is-adding': isAdding, 'bg-blue-300': isAdding, 'bg-blue-600': !isAdding }"><span class="btn-fill"></span><span x-text="isAdding ? 'Adicionando...' : 'Comprar'" class="btn-text"></span></button></div></div></div></template></div></div>
+        <div x-show="view === 'cart'" x-cloak><h2 class="text-3xl font-bold text-gray-800 mb-6">Meu Carrinho</h2><div class="grid grid-cols-1 lg:grid-cols-3 gap-8"><div class="lg:col-span-2"><div class="bg-white rounded-lg shadow-md p-6"><div x-show="$store.cart.items.length === 0" x-cloak class="text-center py-8"><p class="text-gray-600">Seu carrinho está vazio.</p><button @click="changeView('home')" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700">Ver produtos</button></div><div x-show="$store.cart.items.length > 0" class="space-y-6"><template x-for="item in $store.cart.items" :key="item.id"><div class="flex items-center justify-between border-b pb-6 last:border-b-0"><div class="flex items-center"><img :src="item.image" :alt="item.name" class="w-20 h-20 object-cover rounded-md mr-4"><h3 class="font-semibold text-gray-800" x-text="item.name"></h3></div><div class="flex items-center space-x-4"><input type="number" :value="item.quantity" @change="$store.cart.updateQuantity(item.id, $event.target.value)" min="1" class="w-16 text-center border rounded-md"><p class="font-bold w-24 text-right" x-text="`R$ ${(item.price * item.quantity).toFixed(2).replace('.', ',')}`"></p><button @click="$store.cart.removeFromCart(item.id)" class="text-gray-500 hover:text-red-600"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button></div></div></template></div></div></div><div class="lg:col-span-1" x-show="$store.cart.items.length > 0"><div class="bg-white rounded-lg shadow-md p-6 sticky top-24"><h3 class="text-xl font-bold border-b pb-4 mb-4">Resumo do Pedido</h3><div class="space-y-3"><div class="flex justify-between"><span>Subtotal</span><span x-text="`R$ ${$store.cart.subtotal.toFixed(2).replace('.', ',')}`"></span></div><div class="flex justify-between"><span>Frete</span><span x-text="$store.cart.shippingCost === 0 ? 'Grátis' : `R$ ${$store.cart.shippingCost.toFixed(2).replace('.', ',')}`"></span></div><div class="flex justify-between font-bold text-lg pt-4 border-t"><span>Total</span><span x-text="`R$ ${$store.cart.grandTotal.toFixed(2).replace('.', ',')}`"></span></div></div><button @click="changeView('checkout')" class="w-full bg-green-600 text-white py-3 mt-6 rounded-lg hover:bg-green-700 font-semibold">Finalizar Compra</button></div></div></div></div>
+        <div x-show="view === 'checkout'" x-cloak><h2 class="text-3xl font-bold text-gray-800 mb-6">Finalizar Compra</h2><div class="grid grid-cols-1 md:grid-cols-2 gap-8"><div><div class="bg-white rounded-lg shadow-md p-6"><h3 class="text-xl font-bold mb-4">1. Seus Dados</h3><form id="customer-form" class="space-y-4"><div><label class="block text-sm font-medium">Nome Completo</label><input type="text" x-model="customerData.name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div><div><label class="block text-sm font-medium">E-mail</label><input type="email" x-model="customerData.email" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div><div><label class="block text-sm font-medium">CPF</label><input type="text" x-model="customerData.cpf" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div></form></div></div><div><div class="bg-white rounded-lg shadow-md p-6 mb-6"><h3 class="text-xl font-bold border-b pb-4 mb-4">Resumo da Compra</h3><div class="space-y-3"><div class="flex justify-between"><span>Subtotal</span><span x-text="`R$ ${$store.cart.subtotal.toFixed(2).replace('.', ',')}`"></span></div><div class="flex justify-between"><span>Frete</span><span x-text="$store.cart.shippingCost === 0 ? 'Grátis' : `R$ ${$store.cart.shippingCost.toFixed(2).replace('.', ',')}`"></span></div><div x-show="selectedPaymentMethod === 'pix'" class="flex justify-between text-green-600 font-medium"><span>Desconto Pix (1%)</span><span x-text="`- R$ ${($store.cart.grandTotal * 0.01).toFixed(2).replace('.', ',')}`"></span></div><div class="flex justify-between font-bold text-lg pt-4 border-t"><span>Total a Pagar</span><span x-text="`R$ ${totalToPay.toFixed(2).replace('.', ',')}`"></span></div></div></div><div class="bg-white rounded-lg shadow-md p-6"><h3 class="text-xl font-bold mb-4">2. Pagamento</h3><div id="paymentBrick_container"></div></div><div class="mt-6 flex justify-end" x-show="!isProcessing"><button @click.prevent="submitPayment()" class="w-full md:w-auto bg-green-600 text-white py-3 px-8 rounded-lg hover:bg-green-700 font-semibold">Pagar R$ <span x-text="totalToPay.toFixed(2).replace('.', ',')"></span></button></div><div x-show="isProcessing" class="mt-6 flex justify-end items-center space-x-3"><div class="spinner w-6 h-6 border-4 border-blue-500 rounded-full animate-spin"></div><p>Processando...</p></div></div></div></div>
+        <div x-show="view === 'success'" x-cloak><div class="bg-white rounded-lg shadow-md p-8 text-center max-w-lg mx-auto"><svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-green-500 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><h2 class="text-3xl font-bold text-gray-800 mb-2">Pagamento Aprovado!</h2><p class="text-gray-600 mb-6">Obrigado por sua compra! Seu pedido foi realizado com sucesso.</p><button @click="changeView('home')" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700">Voltar ao Início</button></div></div>
+    </main>
+    <nav class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-sm shadow-2xl rounded-full z-50"><div class="flex items-center justify-center space-x-2 p-2"><a href="#" @click.prevent="changeView('home')" class="flex flex-col items-center p-3 rounded-full w-16 h-16" :class="{'text-blue-600 bg-blue-50': view === 'home', 'text-gray-600 hover:bg-gray-100': view !== 'home'}"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg><span class="text-xs mt-1">Início</span></a><a href="#" @click.prevent="changeView('cart')" class="relative flex flex-col items-center p-3 rounded-full w-16 h-16" :class="{'text-blue-600 bg-blue-50': view === 'cart', 'text-gray-600 hover:bg-gray-100': view !== 'cart'}"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg><span class="text-xs mt-1">Carrinho</span><span x-show="$store.cart.totalItems > 0" x-text="$store.cart.totalItems" x-cloak class="absolute top-2 right-2 bg-red-500 text-white text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center"></span></a><a href="#" @click.prevent="changeView('saved')" class="relative flex flex-col items-center p-3 rounded-full w-16 h-16" :class="{'text-blue-600 bg-blue-50': view === 'saved', 'text-gray-600 hover:bg-gray-100': view !== 'saved'}"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg><span class="text-xs mt-1">Salvos</span><span x-show="$store.savedItems.items.length > 0" x-text="$store.savedItems.items.length" x-cloak class="absolute top-2 right-2 bg-red-500 text-white text-[10px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center"></span></a></div></nav>
+</body>
+</html>
